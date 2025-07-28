@@ -1,4 +1,4 @@
-# app_final_analytics.py
+# app_final_analytics_fixed.py
 import streamlit as st
 import pandas as pd
 
@@ -29,11 +29,8 @@ def recalculate_strategy(df: pd.DataFrame):
     """Повністю перераховує всі залежні стовпчики на основі відредагованих даних."""
     
     new_df = df.copy()
-
-    # Визначаємо початкову ціну для розрахунку загального захисту
     initial_start_price = new_df.loc[0, 'Ціна входу ($)'] if not new_df.empty else 0
-
-    # ... (решта коду функції)
+    
     total_margin = 0.0
     total_laz = 0.0
     total_value = 0.0
@@ -56,7 +53,6 @@ def recalculate_strategy(df: pd.DataFrame):
             effective_leverage = total_value / total_margin
             liquidation_price = avg_price * (1 + 1 / effective_leverage)
 
-        # --- РОЗРАХУНОК НОВИХ СТОВПЧИКІВ ---
         safety_margin_percent = ((liquidation_price - price) / price) * 100 if price > 0 else 0
         total_protection_percent = ((liquidation_price - initial_start_price) / initial_start_price) * 100 if initial_start_price > 0 else 0
         status = "✅ Безпечно" if liquidation_price > price else "❌ Небезпечно"
@@ -72,7 +68,6 @@ def recalculate_strategy(df: pd.DataFrame):
         new_df.loc[i, 'Загальний захист (%)'] = f"{total_protection_percent:.1f}%"
         
     return new_df
-
 
 # --- ІНТЕРФЕЙС STREAMLIT ---
 st.title("⚡ Динамічний 'What-If' Симулятор Стратегії")
@@ -90,30 +85,34 @@ with st.sidebar:
 
     if st.button("Сгенерувати / Скинути", type="primary"):
         initial_df = generate_initial_data(start_price, price_step_pct, start_laz, laz_increase_pct, leverage, num_steps)
+        # Зберігаємо базові дані в сесію
         st.session_state.strategy_df = initial_df
         st.rerun()
 
 if 'strategy_df' not in st.session_state or st.session_state.strategy_df.empty:
     st.info("Натисніть 'Сгенерувати / Скинути' на бічній панелі, щоб створити початкову таблицю.")
 else:
-    recalculated_df = recalculate_strategy(st.session_state.strategy_df)
+    # --- ВИПРАВЛЕННЯ ЛОГІКИ ---
+    # 1. Спочатку завжди перераховуємо повну таблицю на основі даних з пам'яті
+    base_df = st.session_state.strategy_df
+    recalculated_df = recalculate_strategy(base_df)
+    
+    # 2. Показуємо дашборд на основі повної, перерахованої таблиці
+    st.header("📈 Підсумковий стан позиції")
     last_step = recalculated_df.iloc[-1]
     
-    # --- ОНОВЛЕНИЙ ДАШБОРД ---
-    st.header("📈 Підсумковий стан позиції")
     cols = st.columns(5)
     cols[0].metric("Середня ціна входу", f"${last_step['Середня ціна входу ($)']:.4f}")
     cols[1].metric("Ціна ліквідації", f"${last_step['Ціна ліквідації ($)']:.4f}")
     cols[2].metric("Загальна маржа", f"${last_step['Загальна вкладена маржа ($)']:.2f}")
-    cols[3].metric("Загальний захист (%)", last_step['Загальний захист (%)'], help="На скільки % ціна має зрости від найпершого входу, щоб ліквідувати всю позицію.")
+    cols[3].metric("Загальний захист (%)", last_step['Загальний захист (%)']")
     cols[4].metric("Загальний об'єм (LAZ)", f"{last_step['Загальний об\'єм LAZ']:.2f}")
     
     st.divider()
     
-    # --- ІНТЕРАКТИВНА ТАБЛИЦЯ ---
+    # 3. Показуємо редактор даних
     st.header("Інтерактивна таблиця стратегії")
     
-    # Визначаємо, які стовпчики будуть відображатись і які будуть заблоковані
     display_columns = [
         "№ Кроку", "Ціна входу ($)", "Об'єм LAZ доданий", "Плече", "Стан входу",
         "Маржа додана на кроці ($)", "Загальна вкладена маржа ($)", "Загальний об'єм LAZ",
@@ -122,16 +121,15 @@ else:
     disabled_columns = [col for col in display_columns if col not in ["Ціна входу ($)", "Об'єм LAZ доданий", "Плече"]]
 
     edited_df = st.data_editor(
-        recalculated_df[display_columns], # Відображаємо тільки потрібні стовпчики
+        recalculated_df[display_columns],
         disabled=disabled_columns,
         num_rows="dynamic",
         hide_index=True,
         key="data_editor"
     )
 
-    if not edited_df.equals(st.session_state.strategy_df[display_columns]):
-        # Оновлюємо тільки ті стовпчики, які користувач міг змінити
-        st.session_state.strategy_df['Ціна входу ($)'] = edited_df['Ціна входу ($)']
-        st.session_state.strategy_df['Об\'єм LAZ доданий'] = edited_df['Об\'єм LAZ доданий']
-        st.session_state.strategy_df['Плече'] = edited_df['Плече']
+    # 4. Порівнюємо відредаговану таблицю з тим, що було до редагування
+    # і оновлюємо пам'ять тільки якщо є зміни
+    if not edited_df.equals(recalculated_df[display_columns]):
+        st.session_state.strategy_df = edited_df
         st.rerun()
